@@ -265,74 +265,68 @@ http {
   default_type application/octet-stream;
   server_tokens off;
   client_max_body_size 100m;
-  gzip on;
-  gzip_disable "msie6";
-  gzip_vary on;
-  gzip_proxied any;
-  gzip_comp_level 6;
-  gzip_buffers 16 8k;
-  gzip_http_version 1.1;
-  gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
+  
+  # Rate limiting zone definition
+  limit_req_zone $binary_remote_addr zone=mylimit:10m rate=1r/s;
   
   server {
-    listen $PORT;
+    listen $PORT default_server;
     server_name _;
 
     root /app/public;
-    index index.html index.htm index.php;
-    charset utf-8;
+    index index.php index.html index.htm;
     add_header X-Frame-Options "SAMEORIGIN";
     add_header X-XSS-Protection "1; mode=block";
-
-    # Show PHP errors during development
-    fastcgi_intercept_errors on;
-
-    # Redirect rules for DreamFactory setup and login
-    location = /setup {
-      try_files $uri $uri/ /index.php?$query_string;
-    }
-
-    # Handle redirects to login page
-    location ~ ^/dreamfactory/dist/index.html$ {
-      return 301 /dreamfactory/dist/#/auth/login;
-    }
-
-    # Angular app routes - ensures proper routing in SPA
-    location ~ ^/dreamfactory/dist/(.*) {
-      try_files $uri $uri/ /dreamfactory/dist/index.html;
-    }
+    
+    gzip on;
+    gzip_disable "msie6";
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_buffers 16 8k;
+    gzip_http_version 1.1;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
 
     location / {
-      try_files $uri $uri/ /index.php?$query_string;
+      try_files $uri $uri/ /index.php?$args;
     }
 
-    location = /favicon.ico { access_log off; log_not_found off; }
-    location = /robots.txt  { access_log off; log_not_found off; }
+    error_page 404 /404.html;
+    error_page 500 502 503 504 /50x.html;
 
+    location = /50x.html {
+      root /usr/share/nginx/html;
+    }
+    
     location ~ \.php$ {
       try_files $uri rewrite ^ /index.php?$query_string;
       fastcgi_split_path_info ^(.+\.php)(/.+)$;
       fastcgi_pass 127.0.0.1:9000;
       fastcgi_index index.php;
-      include /app/nginx/fastcgi_params;
       fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-      fastcgi_connect_timeout 60;
-      fastcgi_send_timeout 180;
-      fastcgi_read_timeout 180;
-      fastcgi_buffer_size 64k;
-      fastcgi_buffers 128 4k;
-      fastcgi_busy_buffers_size 128k;
-      fastcgi_temp_file_write_size 128k;
-      fastcgi_max_temp_file_size 0;
-      fastcgi_intercept_errors on;
+      include /app/nginx/fastcgi_params;
     }
     
     location ~ /\.ht {
       deny all;
     }
-
+    
     location ~ /web.config {
       deny all;
+    }
+    
+    #By default we will limit login calls here using the limit_req_zone set above. The below will allow 1 per second over
+    # 5 seconds (so 5 in 5 seconds)from a single IP before returning a 429 too many requests. Adjust as needed.
+    location /api/v2/user/session {
+      try_files $uri $uri/ /index.php?$args;
+      limit_req zone=mylimit burst=5 nodelay;
+      limit_req_status 429;
+    }
+    
+    location /api/v2/system/admin/session {
+      try_files $uri $uri/ /index.php?$args;
+      limit_req zone=mylimit burst=5 nodelay;
+      limit_req_status 429;
     }
   }
 }
