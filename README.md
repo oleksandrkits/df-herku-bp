@@ -19,7 +19,7 @@ heroku create myapp
 
 # Add required buildpacks in order
 heroku buildpacks:add heroku/php
-heroku buildpacks:add https://github.com/yourusername/claude-ai-buildpack.git
+heroku buildpacks:add https://github.com/punchcode/claude-ai-buildpack.git
 
 # Deploy your app
 git push heroku main

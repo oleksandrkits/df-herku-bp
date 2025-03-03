@@ -31,9 +31,6 @@
     },
     {
       "url": "heroku/nodejs"
-    },
-    {
-      "url": "https://github.com/dreamfactorysoftware/df-herku-bp"
     }
   ],
   "addons": [

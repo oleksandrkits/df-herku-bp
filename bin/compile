@@ -21,7 +21,7 @@ echo "-----> Installing DreamFactory"
 echo "-----> Ensuring PHP buildpack dependencies"
 
 # Check if PHP buildpack was properly installed
-if [ ! -d "/app/.heroku/php" ]; then
+if [ ! -d "$BUILD_DIR/.heroku/php" ]; then
   error "PHP buildpack not installed. Make sure heroku/php buildpack runs before this buildpack."
 fi
 
@@ -47,6 +47,26 @@ fi
 
 cd $BUILD_DIR
 
+# Create composer.json with required PHP extensions if it doesn't exist
+if [ ! -f "$BUILD_DIR/composer.json" ]; then
+  echo "-----> Creating composer.json with required extensions"
+  cat > $BUILD_DIR/composer.json << 'EOF'
+{
+  "require": {
+    "php": "^8.0",
+    "ext-mbstring": "*",
+    "ext-pdo_sqlite": "*"
+  }
+}
+EOF
+else
+  # Update existing composer.json to include required extensions
+  echo "-----> Updating composer.json to include required extensions"
+  TMP_FILE=$(mktemp)
+  jq '.require["ext-mbstring"] = "*" | .require["ext-pdo_sqlite"] = "*"' $BUILD_DIR/composer.json > $TMP_FILE
+  mv $TMP_FILE $BUILD_DIR/composer.json
+fi
+
 # Install composer dependencies
 echo "-----> Installing Composer dependencies"
 composer install --no-dev --ignore-platform-reqs --no-interaction
@@ -63,18 +83,28 @@ chmod +x $BUILD_DIR/.profile.d/php.sh
 # Set up environment
 echo "-----> Setting up DreamFactory environment"
 if [ -f "$BUILD_DIR/artisan" ]; then
-  php artisan df:env --db_connection=sqlite --df_install=Heroku
-  php artisan key:generate --force
+  php "$BUILD_DIR/artisan" df:env --db_connection=sqlite --df_install=Heroku || echo "Warning: df:env command failed, continuing with setup"
+  php "$BUILD_DIR/artisan" key:generate --force || echo "Warning: key:generate command failed, continuing with setup"
+  
+  # Touch sqlite database file
+  mkdir -p "$BUILD_DIR/storage/databases"
+  touch "$BUILD_DIR/storage/databases/database.sqlite"
+  echo "Created SQLite database file"
 else
   echo "Warning: artisan file not found. Skipping DreamFactory environment setup."
   # Create basic .env file if it doesn't exist
   if [ ! -f "$BUILD_DIR/.env" ]; then
     echo "APP_ENV=production" > "$BUILD_DIR/.env"
-    echo "APP_DEBUG=false" >> "$BUILD_DIR/.env"
+    echo "APP_DEBUG=true" >> "$BUILD_DIR/.env"
     echo "DB_CONNECTION=sqlite" >> "$BUILD_DIR/.env"
+    echo "DB_DATABASE=/app/storage/databases/database.sqlite" >> "$BUILD_DIR/.env"
     # Generate app key
     APP_KEY=$(openssl rand -base64 32)
     echo "APP_KEY=base64:$APP_KEY" >> "$BUILD_DIR/.env"
+    
+    # Create the sqlite database directory
+    mkdir -p "$BUILD_DIR/storage/databases"
+    touch "$BUILD_DIR/storage/databases/database.sqlite"
   fi
 fi
 
@@ -122,6 +152,9 @@ http {
     root /app/public;
     index index.php;
 
+    # Show PHP errors during development
+    fastcgi_intercept_errors on;
+
     location / {
       try_files $uri $uri/ /index.php?$query_string;
     }
@@ -130,16 +163,45 @@ http {
       fastcgi_pass 127.0.0.1:9000;
       fastcgi_index index.php;
       fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+      fastcgi_param PATH_INFO $fastcgi_path_info;
+      fastcgi_param PATH_TRANSLATED $document_root$fastcgi_path_info;
       include fastcgi_params;
+      
+      # Show PHP errors
+      fastcgi_param PHP_VALUE "display_errors=On";
     }
   }
 }
 EOF
 
+# Create PHP-FPM configuration
+echo "-----> Creating PHP-FPM configuration"
+mkdir -p $BUILD_DIR/.heroku/php/etc
+mkdir -p $BUILD_DIR/.heroku/php/etc/php-fpm.d
+
+# Main PHP-FPM config
+cat > $BUILD_DIR/.heroku/php/etc/php-fpm.conf << 'EOF'
+[global]
+daemonize = no
+include = /app/.heroku/php/etc/php-fpm.d/*.conf
+EOF
+
+# Pool config
+cat > $BUILD_DIR/.heroku/php/etc/php-fpm.d/www.conf << 'EOF'
+[www]
+listen = 127.0.0.1:9000
+user = nobody
+pm = dynamic
+pm.max_children = 5
+pm.start_servers = 2
+pm.min_spare_servers = 1
+pm.max_spare_servers = 3
+EOF
+
 # Create Procfile if it doesn't exist
 echo "-----> Creating Procfile"
 cat > $BUILD_DIR/Procfile << 'EOF'
-web: sh -c "php-fpm -y /app/.heroku/php/etc/php-fpm.conf && nginx -p /app -c /app/nginx/nginx.conf"
+web: sh -c "cd /app && php artisan migrate --force && php-fpm -y /app/.heroku/php/etc/php-fpm.conf && nginx -p /app -c /app/nginx/nginx.conf"
 EOF
 
 echo "-----> DreamFactory installation complete"
