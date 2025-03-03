@@ -20,10 +20,24 @@ echo "-----> Installing DreamFactory"
 # We're expecting the PHP buildpack to run first
 echo "-----> Ensuring PHP buildpack dependencies"
 
-# If the app is not already cloned, clone it
-if [ ! -f "$BUILD_DIR/composer.json" ]; then
-  echo "-----> Cloning DreamFactory repository"
-  git clone https://github.com/dreamfactorysoftware/dreamfactory.git $BUILD_DIR
+# Clear build directory and clone the repository fresh
+echo "-----> Cloning DreamFactory repository"
+# Save any existing environment files
+if [ -f "$BUILD_DIR/.env" ]; then
+  cp "$BUILD_DIR/.env" /tmp/.env.backup
+fi
+
+# Clone the repository into a temporary directory and then copy files
+TMP_DIR=$(mktemp -d)
+git clone https://github.com/dreamfactorysoftware/dreamfactory.git $TMP_DIR
+# Copy everything from the temp directory to build directory
+cp -R $TMP_DIR/* $BUILD_DIR/
+cp -R $TMP_DIR/.[!.]* $BUILD_DIR/ 2>/dev/null || true
+
+# Restore the environment file if it existed
+if [ -f "/tmp/.env.backup" ]; then
+  cp "/tmp/.env.backup" "$BUILD_DIR/.env"
+  rm /tmp/.env.backup
 fi
 
 cd $BUILD_DIR
@@ -34,12 +48,37 @@ composer install --no-dev --ignore-platform-reqs --no-interaction
 
 # Set up environment
 echo "-----> Setting up DreamFactory environment"
-php artisan df:env --db_connection=sqlite --df_install=Heroku
+if [ -f "$BUILD_DIR/artisan" ]; then
+  php artisan df:env --db_connection=sqlite --df_install=Heroku
+else
+  echo "Warning: artisan file not found. Skipping DreamFactory environment setup."
+  # Create basic .env file if it doesn't exist
+  if [ ! -f "$BUILD_DIR/.env" ]; then
+    echo "APP_ENV=production" > "$BUILD_DIR/.env"
+    echo "APP_DEBUG=false" >> "$BUILD_DIR/.env"
+    echo "DB_CONNECTION=sqlite" >> "$BUILD_DIR/.env"
+  fi
+fi
 
 # Set appropriate permissions
 echo "-----> Setting file permissions"
-chmod -R 755 $BUILD_DIR/storage
-chmod -R 755 $BUILD_DIR/bootstrap/cache
+if [ -d "$BUILD_DIR/storage" ]; then
+  chmod -R 755 $BUILD_DIR/storage
+else
+  echo "Warning: storage directory not found. Creating it..."
+  mkdir -p $BUILD_DIR/storage/logs
+  mkdir -p $BUILD_DIR/storage/app
+  mkdir -p $BUILD_DIR/storage/framework/{cache,sessions,views}
+  chmod -R 755 $BUILD_DIR/storage
+fi
+
+if [ -d "$BUILD_DIR/bootstrap/cache" ]; then
+  chmod -R 755 $BUILD_DIR/bootstrap/cache
+else
+  echo "Warning: bootstrap/cache directory not found. Creating it..."
+  mkdir -p $BUILD_DIR/bootstrap/cache
+  chmod -R 755 $BUILD_DIR/bootstrap/cache
+fi
 
 # Set up NGINX configuration
 echo "-----> Setting up NGINX"

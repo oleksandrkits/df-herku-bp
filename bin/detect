@@ -6,11 +6,27 @@ set -e
 BUILD_DIR=$1
 
 # Check if this is a DreamFactory app
+# Modified to be more permissive in detection
 if [ -f "$BUILD_DIR/composer.json" ]; then
+  # Check if this is explicitly a DreamFactory app
   if grep -q "dreamfactory" "$BUILD_DIR/composer.json"; then
     echo "DreamFactory"
     exit 0
   fi
+  
+  # Also allow app.json to identify this as a DreamFactory app
+  if [ -f "$BUILD_DIR/app.json" ]; then
+    if grep -q "dreamfactory" "$BUILD_DIR/app.json"; then
+      echo "DreamFactory"
+      exit 0
+    fi
+  fi
+fi
+
+# Also allow manually adding a file to identify as a DreamFactory app
+if [ -f "$BUILD_DIR/.is-dreamfactory" ]; then
+  echo "DreamFactory"
+  exit 0
 fi
 
 exit 1
