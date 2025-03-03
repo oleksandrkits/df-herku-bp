@@ -287,6 +287,21 @@ http {
     # Show PHP errors during development
     fastcgi_intercept_errors on;
 
+    # Redirect rules for DreamFactory setup and login
+    location = /setup {
+      try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    # Handle redirects to login page
+    location ~ ^/dreamfactory/dist/index.html$ {
+      return 301 /dreamfactory/dist/#/auth/login;
+    }
+
+    # Angular app routes - ensures proper routing in SPA
+    location ~ ^/dreamfactory/dist/(.*) {
+      try_files $uri $uri/ /dreamfactory/dist/index.html;
+    }
+
     location / {
       try_files $uri $uri/ /index.php?$query_string;
     }
