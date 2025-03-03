@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+cat << EOF
+---
+default_process_types:
+  web: sh -c "php-fpm -y /app/.heroku/php/etc/php-fpm.conf && nginx -p /app -c /app/nginx/nginx.conf"
+EOF

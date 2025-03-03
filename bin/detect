@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+# Exit immediately if a command exits with a non-zero status
+set -e
+
+BUILD_DIR=$1
+
+# Check if this is a DreamFactory app
+if [ -f "$BUILD_DIR/composer.json" ]; then
+  if grep -q "dreamfactory" "$BUILD_DIR/composer.json"; then
+    echo "DreamFactory"
+    exit 0
+  fi
+fi
+
+exit 1

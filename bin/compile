@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+
+# Exit immediately if a command exits with a non-zero status
+set -e
+
+# Load utility functions
+BP_DIR=$(cd $(dirname ${0:-}); cd ..; pwd)
+source $BP_DIR/lib/utils.sh
+
+BUILD_DIR=$1
+CACHE_DIR=$2
+ENV_DIR=$3
+
+# Export all environment variables
+export_env_dir "$ENV_DIR"
+
+echo "-----> Installing DreamFactory"
+
+# Note: System packages are handled by Heroku PHP buildpack
+# We're expecting the PHP buildpack to run first
+echo "-----> Ensuring PHP buildpack dependencies"
+
+# If the app is not already cloned, clone it
+if [ ! -f "$BUILD_DIR/composer.json" ]; then
+  echo "-----> Cloning DreamFactory repository"
+  git clone https://github.com/dreamfactorysoftware/dreamfactory.git $BUILD_DIR
+fi
+
+cd $BUILD_DIR
+
+# Install composer dependencies
+echo "-----> Installing Composer dependencies"
+composer install --no-dev --ignore-platform-reqs --no-interaction
+
+# Set up environment
+echo "-----> Setting up DreamFactory environment"
+php artisan df:env --db_connection=sqlite --df_install=Heroku
+
+# Set appropriate permissions
+echo "-----> Setting file permissions"
+chmod -R 755 $BUILD_DIR/storage
+chmod -R 755 $BUILD_DIR/bootstrap/cache
+
+# Set up NGINX configuration
+echo "-----> Setting up NGINX"
+mkdir -p $BUILD_DIR/nginx
+cat > $BUILD_DIR/nginx/nginx.conf << 'EOF'
+worker_processes auto;
+daemon off;
+
+events {
+  worker_connections 1024;
+}
+
+http {
+  include /etc/nginx/mime.types;
+  default_type application/octet-stream;
+  server_tokens off;
+  client_max_body_size 100m;
+  
+  server {
+    listen ${PORT};
+    server_name _;
+
+    root /app/public;
+    index index.php;
+
+    location / {
+      try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+      fastcgi_pass 127.0.0.1:9000;
+      fastcgi_index index.php;
+      fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+      include fastcgi_params;
+    }
+  }
+}
+EOF
+
+# Create Procfile if it doesn't exist
+echo "-----> Creating Procfile"
+cat > $BUILD_DIR/Procfile << 'EOF'
+web: sh -c "php-fpm -y /app/.heroku/php/etc/php-fpm.conf && nginx -p /app -c /app/nginx/nginx.conf"
+EOF
+
+echo "-----> DreamFactory installation complete"
