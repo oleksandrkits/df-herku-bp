@@ -3,5 +3,5 @@
 cat << EOF
 ---
 default_process_types:
-  web: sh -c "cd /app && php artisan migrate --force && php-fpm -y /app/.heroku/php/etc/php-fpm.conf && nginx -p /app -c /app/nginx/nginx.conf"
+  web: /app/start.sh
 EOF

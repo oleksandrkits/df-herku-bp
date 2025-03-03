@@ -146,7 +146,7 @@ http {
   client_max_body_size 100m;
   
   server {
-    listen ${PORT};
+    listen $PORT;
     server_name _;
 
     root /app/public;
@@ -198,10 +198,28 @@ pm.min_spare_servers = 1
 pm.max_spare_servers = 3
 EOF
 
+# Create start script
+echo "-----> Creating start script"
+cat > $BUILD_DIR/start.sh << 'EOF'
+#!/bin/bash
+cd /app
+php artisan migrate --force
+
+# Replace $PORT in the nginx config
+sed -i "s/\$PORT/$PORT/g" /app/nginx/nginx.conf
+
+# Start PHP-FPM in background
+php-fpm -y /app/.heroku/php/etc/php-fpm.conf &
+
+# Start Nginx in foreground (to keep the container running)
+exec nginx -p /app -c /app/nginx/nginx.conf
+EOF
+chmod +x $BUILD_DIR/start.sh
+
 # Create Procfile if it doesn't exist
 echo "-----> Creating Procfile"
 cat > $BUILD_DIR/Procfile << 'EOF'
-web: sh -c "cd /app && php artisan migrate --force && php-fpm -y /app/.heroku/php/etc/php-fpm.conf && nginx -p /app -c /app/nginx/nginx.conf"
+web: /app/start.sh
 EOF
 
 echo "-----> DreamFactory installation complete"
