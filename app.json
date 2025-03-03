@@ -33,7 +33,7 @@
       "url": "heroku/nodejs"
     },
     {
-      "url": "https://github.com/yourusername/claude-ai-buildpack"
+      "url": "https://github.com/dreamfactorysoftware/df-herku-bp"
     }
   ],
   "addons": [

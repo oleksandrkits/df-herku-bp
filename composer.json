@@ -8,5 +8,7 @@
   ],
   "type": "project",
   "license": "MIT",
-  "require": {}
+  "require": {
+    "ext-pdo_sqlite": "*"
+  }
 }

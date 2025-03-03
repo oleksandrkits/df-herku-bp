@@ -20,6 +20,11 @@ echo "-----> Installing DreamFactory"
 # We're expecting the PHP buildpack to run first
 echo "-----> Ensuring PHP buildpack dependencies"
 
+# Check if PHP buildpack was properly installed
+if [ ! -d "/app/.heroku/php" ]; then
+  error "PHP buildpack not installed. Make sure heroku/php buildpack runs before this buildpack."
+fi
+
 # Clear build directory and clone the repository fresh
 echo "-----> Cloning DreamFactory repository"
 # Save any existing environment files
@@ -46,10 +51,20 @@ cd $BUILD_DIR
 echo "-----> Installing Composer dependencies"
 composer install --no-dev --ignore-platform-reqs --no-interaction
 
+# Ensure SQLite extension is enabled
+echo "-----> Ensuring SQLite PDO driver is available"
+mkdir -p $BUILD_DIR/.profile.d
+cat >> $BUILD_DIR/.profile.d/php.sh << 'EOF'
+# Enable PDO SQLite
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/app/.heroku/php/lib
+EOF
+chmod +x $BUILD_DIR/.profile.d/php.sh
+
 # Set up environment
 echo "-----> Setting up DreamFactory environment"
 if [ -f "$BUILD_DIR/artisan" ]; then
   php artisan df:env --db_connection=sqlite --df_install=Heroku
+  php artisan key:generate --force
 else
   echo "Warning: artisan file not found. Skipping DreamFactory environment setup."
   # Create basic .env file if it doesn't exist
@@ -57,6 +72,9 @@ else
     echo "APP_ENV=production" > "$BUILD_DIR/.env"
     echo "APP_DEBUG=false" >> "$BUILD_DIR/.env"
     echo "DB_CONNECTION=sqlite" >> "$BUILD_DIR/.env"
+    # Generate app key
+    APP_KEY=$(openssl rand -base64 32)
+    echo "APP_KEY=base64:$APP_KEY" >> "$BUILD_DIR/.env"
   fi
 fi
 
