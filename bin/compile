@@ -22,8 +22,19 @@ echo "-----> Ensuring PHP buildpack dependencies"
 
 # Check if PHP buildpack was properly installed
 if [ ! -d "$BUILD_DIR/.heroku/php" ]; then
-  error "PHP buildpack not installed. Make sure heroku/php buildpack runs before this buildpack."
+  # Either no PHP buildpack OR we're in a Cloud Native Buildpack environment, not a Heroku one.
+  # In a CNB environment there are a number of TOML files that vaguely guide inter-buildpack 
+  # dependencies. [See here.](https://github.com/buildpacks/spec/blob/main/platform.md#inputs-4)
+  # But for now, let's require heroku/php as the buildpack we depend upon and hardcode the
+  # bin location to avoid TOML parsing.
+  # TODO: Parse TOML and follow CNB Buildpack Platform API above.
+  if [ ! -d "/layers/heroku_php/platform/bin/"; then
+    error "PHP buildpack not installed or CNB Buildpack API changed. Make sure heroku/php buildpack runs before this buildpack."
+  else
+    export PATH=$PATH:/layers/heroku_php/platform/bin/
+  fi
 fi
+php -v
 
 # Clear build directory and clone the repository fresh
 echo "-----> Cloning DreamFactory repository"
