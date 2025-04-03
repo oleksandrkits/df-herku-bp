@@ -37,6 +37,17 @@ if ! command -v php &> /dev/null; then
 fi
 php -v
 
+# Ensure SQLite PDO driver is available
+echo "-----> Ensuring SQLite PDO driver is available"
+if ! php -m | grep -q pdo_sqlite; then
+  # Try to install the extension
+  apt-get update -qq && apt-get install -y sqlite3 php-sqlite3
+  # Or use the heroku-php-ext-install if available
+  if command -v heroku-php-ext-install > /dev/null; then
+    heroku-php-ext-install pdo_sqlite
+  fi
+fi
+
 # Clone DreamFactory repository if needed
 echo "-----> Cloning DreamFactory repository"
 # Save any existing environment files

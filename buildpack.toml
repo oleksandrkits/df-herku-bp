@@ -12,8 +12,16 @@ include-files = [
   "README.md"
 ]
 
+# Add this section to specify PHP extensions
+[metadata.extensions]
+pdo_sqlite = "*"
+sqlite3 = "*"
+
 [[stacks]]
 id = "heroku-20"
 
 [[stacks]]
-id = "heroku-22" 
+id = "heroku-22"
+
+[[stacks]]
+id = "heroku-24" 
