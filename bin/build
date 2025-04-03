@@ -37,16 +37,51 @@ if ! command -v php &> /dev/null; then
 fi
 php -v
 
-# Ensure SQLite PDO driver is available
+# Modify the SQLite installation section to be more robust
 echo "-----> Ensuring SQLite PDO driver is available"
 if ! php -m | grep -q pdo_sqlite; then
-  # Try to install the extension
-  apt-get update -qq && apt-get install -y sqlite3 php-sqlite3
-  # Or use the heroku-php-ext-install if available
-  if command -v heroku-php-ext-install > /dev/null; then
+  echo "SQLite PDO driver not found, attempting to install..."
+  
+  # Try multiple approaches to install SQLite
+  if command -v apt-get &> /dev/null; then
+    apt-get update -qq && apt-get install -y sqlite3 php-sqlite3
+  fi
+  
+  if command -v heroku-php-ext-install &> /dev/null; then
     heroku-php-ext-install pdo_sqlite
   fi
+  
+  if command -v pecl &> /dev/null; then
+    pecl install sqlite3
+    echo "extension=sqlite3.so" > $BUILD_DIR/.heroku/php/etc/php/conf.d/sqlite3.ini
+    echo "extension=pdo_sqlite.so" > $BUILD_DIR/.heroku/php/etc/php/conf.d/pdo_sqlite.ini
+  fi
+  
+  # Verify installation
+  php -m | grep -q pdo_sqlite && echo "SQLite PDO driver successfully installed" || echo "WARNING: Failed to install SQLite PDO driver"
 fi
+
+# Create SQLite database directory if it doesn't exist
+echo "-----> Setting up SQLite database"
+mkdir -p $BUILD_DIR/storage/databases
+mkdir -p $BUILD_DIR/storage/logs
+mkdir -p $BUILD_DIR/storage/app
+mkdir -p $BUILD_DIR/storage/framework/cache
+mkdir -p $BUILD_DIR/storage/framework/sessions
+mkdir -p $BUILD_DIR/storage/framework/views
+mkdir -p $BUILD_DIR/bootstrap/cache
+
+# Create SQLite database file if it doesn't exist
+touch $BUILD_DIR/storage/databases/database.sqlite
+
+# Set permissions - be more aggressive with permissions
+chmod -R 777 $BUILD_DIR/storage
+chmod -R 777 $BUILD_DIR/bootstrap/cache
+
+# Ensure the database file specifically has the right permissions
+chmod 666 $BUILD_DIR/storage/databases/database.sqlite
+echo "Created SQLite database file with permissions:"
+ls -la $BUILD_DIR/storage/databases/database.sqlite
 
 # Clone DreamFactory repository if needed
 echo "-----> Cloning DreamFactory repository"
@@ -390,6 +425,29 @@ echo "-----> Creating start script"
 cat > $BUILD_DIR/start.sh << 'EOF'
 #!/bin/bash
 cd /app
+
+# Ensure storage directories exist and have proper permissions
+echo "Checking storage directories..."
+mkdir -p /app/storage/databases
+mkdir -p /app/storage/logs
+mkdir -p /app/storage/app
+mkdir -p /app/storage/framework/cache
+mkdir -p /app/storage/framework/sessions
+mkdir -p /app/storage/framework/views
+mkdir -p /app/bootstrap/cache
+
+# Set permissions
+chmod -R 777 /app/storage
+chmod -R 777 /app/bootstrap/cache
+
+# Ensure SQLite database exists and is writable
+if [ ! -f /app/storage/databases/database.sqlite ]; then
+  echo "Creating SQLite database file..."
+  touch /app/storage/databases/database.sqlite
+fi
+chmod 666 /app/storage/databases/database.sqlite
+
+# Run migrations
 php artisan migrate --force
 
 # Replace $PORT in the nginx config
@@ -412,4 +470,26 @@ command = "/app/start.sh"
 default = true
 EOF
 
-echo "-----> DreamFactory installation complete" 
+echo "-----> DreamFactory installation complete"
+
+if [ "$DB_CONNECTION" = "pgsql" ]; then
+  echo "-----> Configuring PostgreSQL connection"
+  # Extract connection details from DATABASE_URL if available
+  if [ -n "$DATABASE_URL" ]; then
+    # Parse the DATABASE_URL to extract components
+    DB_URL=$(echo $DATABASE_URL | sed -e 's/^postgres:\/\///')
+    DB_USER=$(echo $DB_URL | sed -e 's/:.*$//')
+    DB_PASSWORD=$(echo $DB_URL | sed -e 's/^[^:]*://' -e 's/@.*$//')
+    DB_HOST_PORT=$(echo $DB_URL | sed -e 's/^[^@]*@//' -e 's/\/.*//')
+    DB_HOST=$(echo $DB_HOST_PORT | sed -e 's/:.*$//')
+    DB_PORT=$(echo $DB_HOST_PORT | grep ":" | sed -e 's/^[^:]*://')
+    DB_DATABASE=$(echo $DB_URL | sed -e 's/^.*\///')
+    
+    # Set these in the .env file
+    sed -i "s/DB_HOST=.*/DB_HOST=$DB_HOST/" .env
+    sed -i "s/DB_PORT=.*/DB_PORT=${DB_PORT:-5432}/" .env
+    sed -i "s/DB_DATABASE=.*/DB_DATABASE=$DB_DATABASE/" .env
+    sed -i "s/DB_USERNAME=.*/DB_USERNAME=$DB_USER/" .env
+    sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" .env
+  fi
+fi 
