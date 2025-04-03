@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Environment variable management
+# Environment variable management for CNB
 export_env_dir() {
   local env_dir=$1
   if [ -d "$env_dir" ]; then
