@@ -83,6 +83,112 @@ chmod 666 $BUILD_DIR/storage/databases/database.sqlite
 echo "Created SQLite database file with permissions:"
 ls -la $BUILD_DIR/storage/databases/database.sqlite
 
+# Add this after the SQLite database setup section
+echo "-----> Creating custom database configuration"
+mkdir -p $BUILD_DIR/config
+cat > $BUILD_DIR/config/database.php << 'EOF'
+<?php
+
+return [
+    'default' => env('DB_CONNECTION', 'sqlite'),
+    'connections' => [
+        'sqlite' => [
+            'driver' => 'sqlite',
+            'url' => env('DATABASE_URL'),
+            'database' => env('DB_DATABASE', database_path('database.sqlite')),
+            'prefix' => '',
+            'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
+        ],
+        // Other connections...
+    ],
+    // Rest of the config...
+];
+EOF
+
+# Create a custom SQLiteConnector that doesn't fail if the directory exists
+mkdir -p $BUILD_DIR/app/Database/Connectors
+cat > $BUILD_DIR/app/Database/Connectors/SQLiteConnector.php << 'EOF'
+<?php
+
+namespace App\Database\Connectors;
+
+use Illuminate\Database\Connectors\SQLiteConnector as BaseSQLiteConnector;
+
+class SQLiteConnector extends BaseSQLiteConnector
+{
+    /**
+     * Create a new PDO connection.
+     *
+     * @param  string  $dsn
+     * @param  array  $config
+     * @param  array  $options
+     * @return \PDO
+     */
+    public function createConnection($dsn, array $config, array $options)
+    {
+        // Ensure the directory exists
+        if ($dsn !== 'sqlite::memory:' && $dsn !== 'sqlite::memory') {
+            $path = substr($dsn, 7); // Remove 'sqlite:'
+            $dir = dirname($path);
+            
+            if (!is_dir($dir)) {
+                @mkdir($dir, 0777, true);
+            }
+            
+            // Touch the file to create it if it doesn't exist
+            if (!file_exists($path)) {
+                @touch($path);
+                @chmod($path, 0666);
+            }
+        }
+        
+        return parent::createConnection($dsn, $config, $options);
+    }
+}
+EOF
+
+# Create a service provider to register our custom connector
+mkdir -p $BUILD_DIR/app/Providers
+cat > $BUILD_DIR/app/Providers/DatabaseServiceProvider.php << 'EOF'
+<?php
+
+namespace App\Providers;
+
+use App\Database\Connectors\SQLiteConnector;
+use Illuminate\Database\Connection;
+use Illuminate\Database\Connectors\ConnectionFactory;
+use Illuminate\Support\ServiceProvider;
+
+class DatabaseServiceProvider extends ServiceProvider
+{
+    /**
+     * Register services.
+     */
+    public function register(): void
+    {
+        $this->app->bind('db.connector.sqlite', function ($app) {
+            return new SQLiteConnector;
+        });
+    }
+
+    /**
+     * Bootstrap services.
+     */
+    public function boot(): void
+    {
+        //
+    }
+}
+EOF
+
+# Update the app config to use our service provider
+cat >> $BUILD_DIR/config/app.php << 'EOF'
+
+// Add our custom database service provider
+$providers[] = App\Providers\DatabaseServiceProvider::class;
+
+EOF
+
 # Clone DreamFactory repository if needed
 echo "-----> Cloning DreamFactory repository"
 # Save any existing environment files
@@ -492,4 +598,43 @@ if [ "$DB_CONNECTION" = "pgsql" ]; then
     sed -i "s/DB_USERNAME=.*/DB_USERNAME=$DB_USER/" .env
     sed -i "s/DB_PASSWORD=.*/DB_PASSWORD=$DB_PASSWORD/" .env
   fi
-fi 
+fi
+
+# Add this to your build script
+echo "-----> Creating pre-boot script"
+mkdir -p $BUILD_DIR/.heroku/php/etc/php/pre-boot
+cat > $BUILD_DIR/.heroku/php/etc/php/pre-boot/010-sqlite-setup.sh << 'EOF'
+#!/bin/bash
+
+echo "Setting up SQLite database..."
+mkdir -p /app/storage/databases
+mkdir -p /app/storage/logs
+mkdir -p /app/storage/app
+mkdir -p /app/storage/framework/cache
+mkdir -p /app/storage/framework/sessions
+mkdir -p /app/storage/framework/views
+mkdir -p /app/bootstrap/cache
+
+# Set permissions
+chmod -R 777 /app/storage
+chmod -R 777 /app/bootstrap/cache
+
+# Ensure SQLite database exists and is writable
+if [ ! -f /app/storage/databases/database.sqlite ]; then
+  echo "Creating SQLite database file..."
+  touch /app/storage/databases/database.sqlite
+fi
+chmod 666 /app/storage/databases/database.sqlite
+
+# Debug info
+echo "SQLite database path: /app/storage/databases/database.sqlite"
+ls -la /app/storage/databases/database.sqlite
+EOF
+
+chmod +x $BUILD_DIR/.heroku/php/etc/php/pre-boot/010-sqlite-setup.sh
+
+# Add this to your build script
+echo "-----> Creating Procfile"
+cat > $BUILD_DIR/Procfile << 'EOF'
+web: bash -c "mkdir -p /app/storage/databases && touch /app/storage/databases/database.sqlite && chmod 666 /app/storage/databases/database.sqlite && chmod -R 777 /app/storage && chmod -R 777 /app/bootstrap/cache && heroku-php-apache2"
+EOF 
