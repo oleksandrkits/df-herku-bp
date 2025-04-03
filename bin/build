@@ -38,60 +38,30 @@ fi
 php -v
 
 # Modify the SQLite installation section to be more robust
-echo "-----> Ensuring SQLite PDO driver is available"
-if ! php -m | grep -q pdo_sqlite; then
-  echo "SQLite PDO driver not found, attempting to install..."
-  
-  # Try multiple approaches to install SQLite
-  if command -v apt-get &> /dev/null; then
-    apt-get update -qq && apt-get install -y sqlite3 php-sqlite3
-  fi
-  
-  if command -v heroku-php-ext-install &> /dev/null; then
-    heroku-php-ext-install pdo_sqlite
-  fi
-  
-  if command -v pecl &> /dev/null; then
-    pecl install sqlite3
-    echo "extension=sqlite3.so" > $BUILD_DIR/.heroku/php/etc/php/conf.d/sqlite3.ini
-    echo "extension=pdo_sqlite.so" > $BUILD_DIR/.heroku/php/etc/php/conf.d/pdo_sqlite.ini
-  fi
-  
-  # Verify installation
-  php -m | grep -q pdo_sqlite && echo "SQLite PDO driver successfully installed" || echo "WARNING: Failed to install SQLite PDO driver"
-fi
+echo "-----> Setting up PostgreSQL database connection"
 
-# Create SQLite database directory if it doesn't exist
-echo "-----> Setting up SQLite database"
-mkdir -p $BUILD_DIR/storage/databases
-mkdir -p $BUILD_DIR/storage/logs
-mkdir -p $BUILD_DIR/storage/app
-mkdir -p $BUILD_DIR/storage/framework/cache
-mkdir -p $BUILD_DIR/storage/framework/sessions
-mkdir -p $BUILD_DIR/storage/framework/views
-mkdir -p $BUILD_DIR/bootstrap/cache
-
-# Create SQLite database file if it doesn't exist
-touch $BUILD_DIR/storage/databases/database.sqlite
-
-# Set permissions - be more aggressive with permissions
-chmod -R 777 $BUILD_DIR/storage
-chmod -R 777 $BUILD_DIR/bootstrap/cache
-
-# Ensure the database file specifically has the right permissions
-chmod 666 $BUILD_DIR/storage/databases/database.sqlite
-echo "Created SQLite database file with permissions:"
-ls -la $BUILD_DIR/storage/databases/database.sqlite
-
-# Add this after the SQLite database setup section
-echo "-----> Creating custom database configuration"
+# Create a simpler database.php configuration
 mkdir -p $BUILD_DIR/config
 cat > $BUILD_DIR/config/database.php << 'EOF'
 <?php
 
 return [
-    'default' => env('DB_CONNECTION', 'sqlite'),
+    'default' => env('DB_CONNECTION', 'pgsql'),
     'connections' => [
+        'pgsql' => [
+            'driver' => 'pgsql',
+            'url' => env('DATABASE_URL'),
+            'host' => env('DB_HOST', '127.0.0.1'),
+            'port' => env('DB_PORT', '5432'),
+            'database' => env('DB_DATABASE', 'forge'),
+            'username' => env('DB_USERNAME', 'forge'),
+            'password' => env('DB_PASSWORD', ''),
+            'charset' => 'utf8',
+            'prefix' => '',
+            'prefix_indexes' => true,
+            'search_path' => 'public',
+            'sslmode' => 'prefer',
+        ],
         'sqlite' => [
             'driver' => 'sqlite',
             'url' => env('DATABASE_URL'),
@@ -99,94 +69,14 @@ return [
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
         ],
-        // Other connections...
     ],
-    // Rest of the config...
 ];
 EOF
 
-# Create a custom SQLiteConnector that doesn't fail if the directory exists
-mkdir -p $BUILD_DIR/app/Database/Connectors
-cat > $BUILD_DIR/app/Database/Connectors/SQLiteConnector.php << 'EOF'
-<?php
-
-namespace App\Database\Connectors;
-
-use Illuminate\Database\Connectors\SQLiteConnector as BaseSQLiteConnector;
-
-class SQLiteConnector extends BaseSQLiteConnector
-{
-    /**
-     * Create a new PDO connection.
-     *
-     * @param  string  $dsn
-     * @param  array  $config
-     * @param  array  $options
-     * @return \PDO
-     */
-    public function createConnection($dsn, array $config, array $options)
-    {
-        // Ensure the directory exists
-        if ($dsn !== 'sqlite::memory:' && $dsn !== 'sqlite::memory') {
-            $path = substr($dsn, 7); // Remove 'sqlite:'
-            $dir = dirname($path);
-            
-            if (!is_dir($dir)) {
-                @mkdir($dir, 0777, true);
-            }
-            
-            // Touch the file to create it if it doesn't exist
-            if (!file_exists($path)) {
-                @touch($path);
-                @chmod($path, 0666);
-            }
-        }
-        
-        return parent::createConnection($dsn, $config, $options);
-    }
-}
-EOF
-
-# Create a service provider to register our custom connector
-mkdir -p $BUILD_DIR/app/Providers
-cat > $BUILD_DIR/app/Providers/DatabaseServiceProvider.php << 'EOF'
-<?php
-
-namespace App\Providers;
-
-use App\Database\Connectors\SQLiteConnector;
-use Illuminate\Database\Connection;
-use Illuminate\Database\Connectors\ConnectionFactory;
-use Illuminate\Support\ServiceProvider;
-
-class DatabaseServiceProvider extends ServiceProvider
-{
-    /**
-     * Register services.
-     */
-    public function register(): void
-    {
-        $this->app->bind('db.connector.sqlite', function ($app) {
-            return new SQLiteConnector;
-        });
-    }
-
-    /**
-     * Bootstrap services.
-     */
-    public function boot(): void
-    {
-        //
-    }
-}
-EOF
-
-# Update the app config to use our service provider
-cat >> $BUILD_DIR/config/app.php << 'EOF'
-
-// Add our custom database service provider
-$providers[] = App\Providers\DatabaseServiceProvider::class;
-
+# Create a Procfile that uses PostgreSQL
+echo "-----> Creating Procfile"
+cat > $BUILD_DIR/Procfile << 'EOF'
+web: vendor/bin/heroku-php-apache2
 EOF
 
 # Clone DreamFactory repository if needed
@@ -637,4 +527,68 @@ chmod +x $BUILD_DIR/.heroku/php/etc/php/pre-boot/010-sqlite-setup.sh
 echo "-----> Creating Procfile"
 cat > $BUILD_DIR/Procfile << 'EOF'
 web: bash -c "mkdir -p /app/storage/databases && touch /app/storage/databases/database.sqlite && chmod 666 /app/storage/databases/database.sqlite && chmod -R 777 /app/storage && chmod -R 777 /app/bootstrap/cache && heroku-php-apache2"
-EOF 
+EOF
+
+# Add this to your build script
+echo "-----> Creating database URL parser"
+mkdir -p $BUILD_DIR/.profile.d
+cat > $BUILD_DIR/.profile.d/000-parse-database-url.sh << 'EOF'
+#!/bin/bash
+
+if [ -n "$DATABASE_URL" ]; then
+  # Extract DB connection info from the DATABASE_URL
+  if [[ $DATABASE_URL == postgres://* ]]; then
+    # Parse the DATABASE_URL
+    DB_URL=$(echo $DATABASE_URL | sed -e 's/^postgres:\/\///')
+    DB_USER=$(echo $DB_URL | sed -e 's/:.*$//')
+    DB_PASSWORD=$(echo $DB_URL | sed -e 's/^[^:]*://' -e 's/@.*$//')
+    DB_HOST_PORT=$(echo $DB_URL | sed -e 's/^[^@]*@//' -e 's/\/.*//')
+    DB_HOST=$(echo $DB_HOST_PORT | sed -e 's/:.*$//')
+    DB_PORT=$(echo $DB_HOST_PORT | grep ":" | sed -e 's/^[^:]*://')
+    DB_DATABASE=$(echo $DB_URL | sed -e 's/^.*\///')
+    
+    # Set environment variables
+    export DB_CONNECTION=pgsql
+    export DB_HOST=$DB_HOST
+    export DB_PORT=${DB_PORT:-5432}
+    export DB_DATABASE=$DB_DATABASE
+    export DB_USERNAME=$DB_USER
+    export DB_PASSWORD=$DB_PASSWORD
+    
+    echo "PostgreSQL connection configured from DATABASE_URL"
+  fi
+fi
+EOF
+
+chmod +x $BUILD_DIR/.profile.d/000-parse-database-url.sh
+
+# Add this to your build script
+echo "-----> Creating post-deploy setup script"
+mkdir -p $BUILD_DIR/.profile.d
+cat > $BUILD_DIR/.profile.d/001-dreamfactory-setup.sh << 'EOF'
+#!/bin/bash
+
+# Wait for PostgreSQL to be ready
+echo "Waiting for PostgreSQL to be ready..."
+sleep 5
+
+# Run migrations
+cd /app
+php artisan migrate --force
+
+# Create storage directories with proper permissions
+mkdir -p /app/storage/logs
+mkdir -p /app/storage/app
+mkdir -p /app/storage/framework/cache
+mkdir -p /app/storage/framework/sessions
+mkdir -p /app/storage/framework/views
+mkdir -p /app/bootstrap/cache
+
+# Set permissions
+chmod -R 777 /app/storage
+chmod -R 777 /app/bootstrap/cache
+
+echo "DreamFactory setup completed"
+EOF
+
+chmod +x $BUILD_DIR/.profile.d/001-dreamfactory-setup.sh 
