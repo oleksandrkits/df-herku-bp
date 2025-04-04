@@ -1,7 +1,8 @@
+api = "0.10"
+
 [buildpack]
 id = "dreamfactory/dreamfactory"
 version = "1.0.0"
-api = "0.10"
 name = "DreamFactory Buildpack"
 homepage = "https://github.com/dreamfactorysoftware/df-herku-bp"
 
